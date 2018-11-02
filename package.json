@@ -1,0 +1,34 @@
+{
+  "name": "eth-external-account-keyring",
+  "version": "1.0.0",
+  "description": "Interface for handling external accounts.",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/r001/eth-external-account-keyring.git"
+  },
+  "keywords": [
+    "ethereum",
+    "keyring"
+  ],
+  "author": "Robert Horvath",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/r001/eth-external-account-keyring/issues"
+  },
+  "homepage": "https://github.com/MetaMask/eth-external-account-keyring#readme",
+  "dependencies": {
+    "ethereumjs-abi": "^0.6.5",
+    "ethereumjs-util": "^5.1.1",
+    "events": "^1.1.1",
+    "xtend": "^4.0.1"
+  },
+  "devDependencies": {
+    "extend": "^3.0.0",
+    "chai": "^4.1.2",
+    "mocha": "^5.2.0"
+  }
+}
