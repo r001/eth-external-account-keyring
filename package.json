@@ -23,6 +23,7 @@
   "dependencies": {
     "ethereumjs-abi": "^0.6.5",
     "ethereumjs-util": "^5.1.1",
+    "eth-sig-util": "^2.0.2",
     "events": "^1.1.1",
     "xtend": "^4.0.1"
   },
