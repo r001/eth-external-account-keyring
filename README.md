@@ -49,21 +49,13 @@ When this method is called, you must return an array of hex-string addresses for
 
 ### signTransaction(address, transaction)
 
-Not supported.
-
 This method will receive a hex-prefixed, all-lowercase address string for the account you should sign the incoming transaction with.
 
-For your convenience, the transaction is an instance of ethereumjs-tx, (https://github.com/ethereumjs/ethereumjs-tx) so signing can be as simple as:
-
-```
-transaction.sign(privateKey)
-```
+It will create a popup modal for user to sign the tx externally. 
 
 You must return a valid signed ethereumjs-tx (https://github.com/ethereumjs/ethereumjs-tx) object when complete, it can be the same transaction you received.
 
 ### signMessage(address, data)
-
-Not supported.
 
 The `eth_sign` method will receive the incoming data, alread hashed, and must sign that hash, and then return the raw signed hash.
 
