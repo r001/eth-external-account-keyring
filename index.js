@@ -54,7 +54,7 @@ class ExternalAccountKeyring extends EventEmitter {
     if (!ethUtil.isValidAddress(address)) return Promise.reject(new Error('Invalid address: ' + address))
     var extToSign = this.getState('extToSign')
     const serialized = this._serializeUnsigned(tx, address)
-    const id = '0x' + ethUtil.sha3(JSON.stringify(serialized) + Date.now().toString()).toString('hex')
+    const id = ethUtil.bufferToInt(tx.r)
     extToSign.push({type: 'sign_transaction', payload: serialized, from: address, id: id})
     this.updateState({extToSign: extToSign})
     //
@@ -74,7 +74,8 @@ class ExternalAccountKeyring extends EventEmitter {
             this.updateState({extCancel: extCancel})
             // if we could have besides tx state of 'signed' and 'failed'
             // one called 'canceled', we could return in a more meaningful way
-            reject(new Error('User canceled transaction signing'))
+            tx.r = ethUtil.toBuffer('cancel')
+            resolve(tx)
           }
           if (signedTx) {
             log.info('user signed Tx tx')
@@ -91,7 +92,7 @@ class ExternalAccountKeyring extends EventEmitter {
               reject(new Error('Invalid signature provided'))
             }
           }
-        }, 1000)
+        }, 500)
     })
   }
 
@@ -186,7 +187,7 @@ class ExternalAccountKeyring extends EventEmitter {
         msgStr = '0x' + ethUtil.bufferToHex(msg.msgParams.data)
       }
       const id = '0x' + ethUtil.sha3(type + msgStr + withAccount + Date.now().toString()).toString('hex')
-      extToSign.push({type: type, payload: msg.msgParams.data, from: withAccount, id: id})
+      extToSign.push({type: type, payload: msgStr, from: withAccount, id: id})
       this.updateState({extToSign: extToSign})
       //
       // check for user provided signature
@@ -199,7 +200,7 @@ class ExternalAccountKeyring extends EventEmitter {
           this._cleanup(extCancel, 'extCancel', interval, msg, withAccount, type)
           // if we could have besides msg state of 'signed' and 'failed'
           // one called 'canceled', we could return in a more meaningful way
-          throw new Error('User canceled message signing')
+          resolve('cancel')
         }
         if (signedMsg) {
           this._cleanup(extSigned, 'extSigned', interval, msg, withAccount, type)
