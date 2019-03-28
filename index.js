@@ -74,8 +74,7 @@ class ExternalAccountKeyring extends EventEmitter {
             this.updateState({extCancel: extCancel})
             // if we could have besides tx state of 'signed' and 'failed'
             // one called 'canceled', we could return in a more meaningful way
-            tx.r = ethUtil.toBuffer('cancel')
-            resolve(tx)
+            reject(new Error('Cancel pressed'))
           }
           if (signedTx) {
             log.info('user signed Tx tx')
@@ -200,7 +199,7 @@ class ExternalAccountKeyring extends EventEmitter {
           this._cleanup(extCancel, 'extCancel', interval, msg, withAccount, type)
           // if we could have besides msg state of 'signed' and 'failed'
           // one called 'canceled', we could return in a more meaningful way
-          resolve('cancel')
+          reject(new Error('Cancel pressed'))
         }
         if (signedMsg) {
           this._cleanup(extSigned, 'extSigned', interval, msg, withAccount, type)
