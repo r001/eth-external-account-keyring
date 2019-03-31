@@ -54,7 +54,7 @@ class ExternalAccountKeyring extends EventEmitter {
     if (!ethUtil.isValidAddress(address)) return Promise.reject(new Error('Invalid address: ' + address))
     var extToSign = this.getState('extToSign')
     const serialized = this._serializeUnsigned(tx, address)
-    const id = ethUtil.bufferToInt(tx.r)
+    const id = ethUtil.sha3(JSON.stringify(serialized) + Date.now().toString()).toString('hex')
     extToSign.push({type: 'sign_transaction', payload: serialized, from: address, id: id})
     this.updateState({extToSign: extToSign})
     //
@@ -177,17 +177,19 @@ class ExternalAccountKeyring extends EventEmitter {
  * @return {Promise} signed Signed message
  */
   _signMsg (type, withAccount, msg) {
-    return new Promise((resolve, reject) => {
-      var extToSign = this.getState('extToSign')
-      var msgStr
-      if (type === 'sign_typed_data') {
-        msgStr = JSON.stringify(msg.msgparams.data)
-      } else {
-        msgStr = '0x' + ethUtil.bufferToHex(msg.msgParams.data)
+    var extToSign = this.getState('extToSign')
+    let msgStr
+    if (type === 'sign_typed_data') {
+      if ( typeof msg !== 'string'){
+        msgStr = JSON.stringify(msg)
       }
-      const id = '0x' + ethUtil.sha3(type + msgStr + withAccount + Date.now().toString()).toString('hex')
-      extToSign.push({type: type, payload: msgStr, from: withAccount, id: id})
-      this.updateState({extToSign: extToSign})
+    } else {
+      msgStr = msg
+    }
+    const id = ethUtil.sha3(type + msgStr + withAccount + Date.now().toString()).toString('hex')
+    extToSign.push({type: type, payload: msgStr, from: withAccount, id: id})
+    this.updateState({extToSign: extToSign})
+    return new Promise((resolve, reject) => {
       //
       // check for user provided signature
       var interval = setInterval(() => {
@@ -248,8 +250,6 @@ class ExternalAccountKeyring extends EventEmitter {
     clearInterval(interval)
     toClean = toClean.filter((sg) => !this._eq(sg, msg, withAccount, type))
     this.updateState({[key]: toClean})
-    var extToSign = extToSign.filter((sg) => !this._eq(sg, msg, withAccount, type))
-    this.updateState({extToSign: extToSign})
   }
 
   // converts hex encoded signature to r, s, v signature
