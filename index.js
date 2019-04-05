@@ -14,10 +14,13 @@ class ExternalAccountKeyring extends EventEmitter {
     this.type = type
     this.accounts = []
     this.deserialize(opts)
+    this.getState = () => { throw new Error('ExternalAccountKeyring was improperly initialized. Please run setExtCallback() before signing!') }
+    this.updateState = () => { throw new Error('ExternalAccountKeyring was improperly initialized. Please run setExtCallback() before signing!') }
   }
 
-  setMemStore (memStore) {
-    this.memStore = memStore
+  setExtCallback (getExternalState, setExternalState) {
+    this.getState = getExternalState
+    this.updateState = setExternalState
   }
 
   serialize () {
@@ -49,17 +52,17 @@ class ExternalAccountKeyring extends EventEmitter {
     if (!(tx instanceof Transaction)) return Promise.reject(new Error('Invalid transaction'))
     if (!ethUtil.isValidAddress(address)) return Promise.reject(new Error('Invalid address: ' + address))
 
-    var extToSign = this.memStore.getState()['extToSign']
+    var extToSign = this.getState().extToSign
     const serialized = this._serializeUnsigned(tx, address)
     const id = ethUtil.sha3(JSON.stringify(serialized) + Date.now().toString()).toString('hex')
     extToSign.push({type: 'sign_transaction', payload: serialized, from: address, id})
-    this.memStore.updateState({extToSign})
+    this.updateState({extToSign})
     //
     // check for user provided signature
     log.info('ExternalAccountKeyring - signTransaction: extToSign:' + JSON.stringify(extToSign))
     return new Promise((resolve, reject) => {
         var interval = setInterval(() => {
-          const state = this.memStore.getState()
+          const state = this.getState()
           var extSigned = state['extSigned']
           var extCancel = state['extCancel']
           var signedTx = extSigned.find((txn) => this._sameTx(txn, tx, id, address))
@@ -69,7 +72,7 @@ class ExternalAccountKeyring extends EventEmitter {
             log.info('user canceled tx')
             clearInterval(interval)
             extCancel = extCancel.filter(txn => !this._sameTx(txn, tx, id, address))
-            this.memStore.updateState({extCancel})
+            this.updateState({extCancel})
             // if we could have besides tx state of 'signed' and 'failed'
             // one called 'canceled', we could return in a more meaningful way
             reject(new Error('Cancel pressed'))
@@ -78,7 +81,7 @@ class ExternalAccountKeyring extends EventEmitter {
             log.info('user signed Tx tx')
             clearInterval(interval)
             extSigned = extSigned.filter((txn) => !this._sameTx(txn, tx, id, address))
-            this.memStore.updateState({extSigned})
+            this.updateState({extSigned})
             const {v, r, s} = this._signatureHexToVRS(signedTx.signature)
             tx.v = v
             tx.r = r
@@ -175,10 +178,10 @@ class ExternalAccountKeyring extends EventEmitter {
  * @return {Promise} signed Signed message
  */
   _signMsg (type, withAccount, msg) {
-    var extToSign = this.memStore.getState()['extToSign']
+    var extToSign = this.getState().extToSign
     let msgStr
     if (type === 'sign_typed_data') {
-      if ( typeof msg !== 'string'){
+      if (typeof msg !== 'string') {
         msgStr = JSON.stringify(msg)
       }
     } else {
@@ -186,12 +189,12 @@ class ExternalAccountKeyring extends EventEmitter {
     }
     const id = ethUtil.sha3(type + msgStr + withAccount + Date.now().toString()).toString('hex')
     extToSign.push({type: type, payload: msgStr, from: withAccount, id})
-    this.memStore.updateState({extToSign})
+    this.updateState({extToSign})
     return new Promise((resolve, reject) => {
       //
       // check for user provided signature
       var interval = setInterval(() => {
-        const state = this.memStore.getState()
+        const state = this.getState()
         var extSigned = state['extSigned']
         var extCancel = state['extCancel']
         var signedMsg = extSigned.find((sg) => this._eq(sg, msg, withAccount, type, id))
@@ -248,7 +251,7 @@ class ExternalAccountKeyring extends EventEmitter {
   _cleanup (toClean, key, interval, msg, withAccount, type) {
     clearInterval(interval)
     toClean = toClean.filter((sg) => !this._eq(sg, msg, withAccount, type))
-    this.memStore.updateState({[key]: toClean})
+    this.updateState({[key]: toClean})
   }
 
   // converts hex encoded signature to r, s, v signature
