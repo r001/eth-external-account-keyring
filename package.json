@@ -19,7 +19,7 @@
   "bugs": {
     "url": "https://github.com/r001/eth-external-account-keyring/issues"
   },
-  "homepage": "https://github.com/MetaMask/eth-external-account-keyring#readme",
+  "homepage": "https://github.com/r001/eth-external-account-keyring#readme",
   "dependencies": {
     "ethereumjs-abi": "^0.6.5",
     "ethereumjs-util": "^5.1.1",
