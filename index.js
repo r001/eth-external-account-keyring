@@ -48,6 +48,7 @@ class ExternalAccountKeyring extends EventEmitter {
 
   // tx is an instance of the ethereumjs-tx class.
   signTransaction (address, tx) {
+    var intervalCounter = 0
     log.info('ExternalAccountKeyring - signTransaction - address:' + address)
     if (!(tx instanceof Transaction)) return Promise.reject(new Error('Invalid transaction'))
     if (!ethUtil.isValidAddress(address)) return Promise.reject(new Error('Invalid address: ' + address))
@@ -65,6 +66,22 @@ class ExternalAccountKeyring extends EventEmitter {
           const state = this.getState()
           var extSigned = state['extSigned']
           var extCancel = state['extCancel']
+          var extKeepAlive = state['extKeepAlive']
+
+          // if signing modal was closed
+          if (intervalCounter > 15) {
+            clearInterval(interval)
+            reject(new Error('Cancel pressed'))
+          }
+          // signing modal sent keep alive
+          if (extKeepAlive.find((eid) => eid === id)) {
+            extKeepAlive = extKeepAlive.filter((eid) => eid !== id)
+            this.updateState({extKeepAlive})
+            intervalCounter = 0
+          } else {
+            intervalCounter++
+          }
+
           var signedTx = extSigned.find((txn) => this._sameTx(txn, tx, id, address))
           var cancelTx = extCancel.find((txn) => this._sameTx(txn, tx, id, address))
           log.info('signedTx: ' + JSON.stringify(signedTx) + ' cancelTx: ' + JSON.stringify(cancelTx))
@@ -178,6 +195,7 @@ class ExternalAccountKeyring extends EventEmitter {
  * @return {Promise} signed Signed message
  */
   _signMsg (type, withAccount, msg) {
+    var intervalCounter = 0
     var extToSign = this.getState().extToSign
     let msgStr
     if (type === 'sign_typed_data') {
@@ -197,6 +215,21 @@ class ExternalAccountKeyring extends EventEmitter {
         const state = this.getState()
         var extSigned = state['extSigned']
         var extCancel = state['extCancel']
+        var extKeepAlive = state['extKeepAlive']
+
+        // signing modal was closed
+        if (intervalCounter > 15) {
+          clearInterval(interval)
+        }
+        // signing modal sent keep alive
+        if (extKeepAlive.find((eid) => eid === id)) {
+          extKeepAlive = extKeepAlive.filter((eid) => eid !== id)
+          this.updateState({extKeepAlive})
+          intervalCounter = 0
+        } else {
+          intervalCounter++
+        }
+
         var signedMsg = extSigned.find((sg) => this._eq(sg, msg, withAccount, type, id))
         var cancelMsg = extCancel.find((ca) => this._eq(ca, msg, withAccount, type, id))
         if (cancelMsg) {
