@@ -218,7 +218,7 @@ class ExternalAccountKeyring extends EventEmitter {
         var extKeepAlive = state['extKeepAlive']
 
         // signing modal was closed
-        if (intervalCounter > 15) {
+        if (intervalCounter > 25) {
           clearInterval(interval)
         }
         // signing modal sent keep alive
