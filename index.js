@@ -220,6 +220,7 @@ class ExternalAccountKeyring extends EventEmitter {
         // signing modal was closed
         if (intervalCounter > 25) {
           clearInterval(interval)
+          reject(new Error('Cancel pressed'))
         }
         // signing modal sent keep alive
         if (extKeepAlive.find((eid) => eid === id)) {
