@@ -16,6 +16,8 @@ class ExternalAccountKeyring extends EventEmitter {
     this.deserialize(opts)
     this.getState = () => { throw new Error('ExternalAccountKeyring was improperly initialized. Please run setExtCallback() before signing!') }
     this.updateState = () => { throw new Error('ExternalAccountKeyring was improperly initialized. Please run setExtCallback() before signing!') }
+    this.pollingMsec = 500
+    this.timeoutMsec = 20000
   }
 
   setExtCallback (getExternalState, setExternalState) {
@@ -69,7 +71,7 @@ class ExternalAccountKeyring extends EventEmitter {
           var extKeepAlive = state['extKeepAlive']
 
           // if signing modal was closed
-          if (intervalCounter > 25) {
+          if (intervalCounter > this.timeoutMsec / this.pollingMsec) {
             clearInterval(interval)
             reject(new Error('Cancel pressed'))
           }
@@ -109,7 +111,7 @@ class ExternalAccountKeyring extends EventEmitter {
               reject(new Error('Invalid signature provided'))
             }
           }
-        }, 500)
+        }, this.pollingMsec)
     })
   }
 
@@ -195,6 +197,7 @@ class ExternalAccountKeyring extends EventEmitter {
  * @return {Promise} signed Signed message
  */
   _signMsg (type, withAccount, msg) {
+    log.info('ExternalAccountKeyring - ' + type + ' - address:' + withAccount)
     var intervalCounter = 0
     var extToSign = this.getState().extToSign
     let msgStr
@@ -208,6 +211,7 @@ class ExternalAccountKeyring extends EventEmitter {
     const id = ethUtil.sha3(type + msgStr + withAccount + Date.now().toString()).toString('hex')
     extToSign.push({type: type, payload: msgStr, from: withAccount, id})
     this.updateState({extToSign})
+    log.info('ExternalAccountKeyring - ' + type + ' - extToSign:' + JSON.stringify(extToSign))
     return new Promise((resolve, reject) => {
       //
       // check for user provided signature
@@ -218,7 +222,7 @@ class ExternalAccountKeyring extends EventEmitter {
         var extKeepAlive = state['extKeepAlive']
 
         // signing modal was closed
-        if (intervalCounter > 25) {
+        if (intervalCounter > this.timeoutMsec / this.pollingMsec) {
           clearInterval(interval)
           reject(new Error('Cancel pressed'))
         }
@@ -233,13 +237,16 @@ class ExternalAccountKeyring extends EventEmitter {
 
         var signedMsg = extSigned.find((sg) => this._eq(sg, msg, withAccount, type, id))
         var cancelMsg = extCancel.find((ca) => this._eq(ca, msg, withAccount, type, id))
+        log.info('signedMsg: ' + JSON.stringify(signedMsg) + ' cancelMsg: ' + JSON.stringify(cancelMsg))
         if (cancelMsg) {
+          log.info('user canceled msg signing')
           this._cleanup(extCancel, 'extCancel', interval, msg, withAccount, type)
           // if we could have besides msg state of 'signed' and 'failed'
           // one called 'canceled', we could return in a more meaningful way
           reject(new Error('Cancel pressed'))
         }
         if (signedMsg) {
+          log.info('user signed Msg')
           this._cleanup(extSigned, 'extSigned', interval, msg, withAccount, type)
           try {
             const {v, r, s} = this._signatureHexToVRS(signedMsg.signature)
@@ -258,7 +265,7 @@ class ExternalAccountKeyring extends EventEmitter {
             reject(new Error('Signature invalid'))
           }
         }
-      }, 500)
+      }, this.pollingMsec)
     })
   }
 
