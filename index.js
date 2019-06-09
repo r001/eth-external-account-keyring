@@ -53,16 +53,35 @@ class BidirectionalQrKeyring extends EventEmitter {
 
   // tx is an instance of the ethereumjs-tx class.
   signTransaction (address, tx, opts = {txId: null}) {
-    log.info('BidirectionalQrKeyring - signTransaction - address:' + address)
-    if (!(tx instanceof Transaction)) return Promise.reject(new Error('Invalid transaction'))
-    if (!ethUtil.isValidAddress(address)) return Promise.reject(new Error('Invalid address: ' + address))
+    log.info(`BidirectionalQrKeyring - signTransaction - address: ${address}`)
+
+    if (!(tx instanceof Transaction)) {
+      return Promise.reject(new Error('Invalid transaction'))
+    }
+
+    if (!ethUtil.isValidAddress(address)) {
+      return Promise.reject(new Error('Invalid address: ' + address))
+    }
 
     var bidirectionalQrSignables = this.memStore
       .getState().bidirectionalQrSignables
+
     const serialized = this._serializeUnsigned(tx, address)
     if (opts.txId) var id = opts.txId
-    else id = ethUtil.sha3(JSON.stringify(serialized) + Date.now().toString()).toString('hex')
-    bidirectionalQrSignables.push({type: 'sign_transaction', payload: serialized, from: address, id})
+    else {
+      id = ethUtil.sha3(
+        JSON.stringify(serialized) +
+        Date.now().toString()
+      ).toString('hex')
+    }
+
+    bidirectionalQrSignables.push({
+      type: 'sign_transaction',
+      payload: serialized,
+      from: address,
+      id,
+    })
+
     this.memStore
       .updateState({bidirectionalQrSignables})
 
@@ -138,9 +157,11 @@ class BidirectionalQrKeyring extends EventEmitter {
  * @return {Promise} signed Signed message
  */
   _signMsg (type, withAccount, msg) {
-    log.info('BidirectionalQrKeyring - ' + type + ' - address:' + withAccount)
+    log.info(`BidirectionalQrKeyring - ${type} - address: ${withAccount}`)
+
     var bidirectionalQrSignables = this.memStore
       .getState().bidirectionalQrSignables
+
     let msgStr
     if (type === 'sign_typed_data') {
       if (typeof msg !== 'string') {
@@ -149,15 +170,24 @@ class BidirectionalQrKeyring extends EventEmitter {
     } else {
       msgStr = msg
     }
+
     const id = ethUtil.sha3(type + msgStr + withAccount + Date.now().toString()).toString('hex')
-    bidirectionalQrSignables.push({type: type, payload: msgStr, from: withAccount, id})
+    bidirectionalQrSignables.push({
+      type: type,
+      payload: msgStr,
+      from: withAccount,
+      id,
+    })
+
     this.memStore.updateState({bidirectionalQrSignables})
-    log.info('BidirectionalQrKeyring - ' + type + ' - bidirectionalQrSignables:' + JSON.stringify(bidirectionalQrSignables))
+    log.info(`BidirectionalQrKeyring - ${type} - bidirectionalQrSignables:` + JSON.stringify(bidirectionalQrSignables))
     return new Promise((resolve, reject) => {
+
       this.once(`${id}:signed`, (rawMsgSig) => {
         log.info(`BidirectionalQrKeyring - signTransaction signed id: ${id}`)
         resolve(rawMsgSig)
       })
+
       this.once(`${id}:canceled`, () => {
         log.info(`BidirectionalQrKeyring - signTransaction canceled id: ${id}`)
         reject(new Error('Cancel pressed'))
@@ -169,13 +199,16 @@ class BidirectionalQrKeyring extends EventEmitter {
     r = ethUtil.toBuffer(r)
     s = ethUtil.toBuffer(s)
     v = ethUtil.toBuffer(v)
+
     var signables = this.memStore
       .getState()
       .bidirectionalQrSignables
       .filter(signable => signable.id === id)
+
     if (!signables || signables.length !== 1) {
       return Promise.reject(new Error('Signable id not found.'))
     }
+
     const signable = signables[0]
     if (signable.type === 'sign_transaction') {
       const tx = new Transaction(signable.payload)
@@ -222,10 +255,12 @@ class BidirectionalQrKeyring extends EventEmitter {
       .getState()
       .bidirectionalQrSignables
       .filter(signable => signable.id !== id)
+
     this.memStore
       .updateState({
         bidirectionalQrSignables: idRemoved,
       })
+
     return Promise.resolve()
   }
 
@@ -234,14 +269,18 @@ class BidirectionalQrKeyring extends EventEmitter {
       .getState()
       .bidirectionalQrSignables
       .filter(signable => signable.id !== id)
+
     this.memStore
       .updateState({
         bidirectionalQrSignables: idRemoved,
       })
-      this.emit(`${id}:canceled`)
+
+    this.emit(`${id}:canceled`)
     return Promise.resolve()
   }
 }
+
 BidirectionalQrKeyring.type = type
 BidirectionalQrKeyring.instance = null
+
 module.exports = BidirectionalQrKeyring
