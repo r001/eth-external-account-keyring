@@ -1,6 +1,6 @@
 {
-  "name": "eth-external-account-keyring",
-  "version": "1.3.5",
+  "name": "eth-bidirectional-qr-keyring",
+  "version": "2.0.0",
   "description": "Interface for handling external accounts.",
   "main": "index.js",
   "scripts": {

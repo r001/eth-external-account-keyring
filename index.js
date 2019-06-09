@@ -2,27 +2,26 @@ const EventEmitter = require('events').EventEmitter
 const ethUtil = require('ethereumjs-util')
 const sigUtil = require('eth-sig-util')
 const log = require('loglevel')
-const type = 'External Account'
+const type = 'Bidirectional Qr Account'
 const Transaction = require('ethereumjs-tx')
+const ObservableStore = require('obs-store')
 
-class ExternalAccountKeyring extends EventEmitter {
+class BidirectionalQrKeyring extends EventEmitter {
 
   /* PUBLIC METHODS */
-
   constructor (opts) {
+    if (BidirectionalQrKeyring.instance) {
+      BidirectionalQrKeyring.instance.deserialize(opts)
+      return BidirectionalQrKeyring.instance
+    }
     super()
     this.type = type
     this.accounts = []
+    this.memStore = new ObservableStore({
+      bidirectionalQrSignables: [],
+    })
+    BidirectionalQrKeyring.instance = this
     this.deserialize(opts)
-    this.getState = () => { throw new Error('ExternalAccountKeyring was improperly initialized. Please run setExtCallback() before signing!') }
-    this.updateState = () => { throw new Error('ExternalAccountKeyring was improperly initialized. Please run setExtCallback() before signing!') }
-    this.pollingMsec = 500
-    this.timeoutMsec = 20000
-  }
-
-  setExtCallback (getExternalState, setExternalState) {
-    this.getState = getExternalState
-    this.updateState = setExternalState
   }
 
   serialize () {
@@ -32,7 +31,7 @@ class ExternalAccountKeyring extends EventEmitter {
   deserialize (accounts = []) {
     return new Promise((resolve, reject) => {
       try {
-        this.accounts = accounts.slice()
+        this.accounts = this.accounts.concat(accounts.slice())
       } catch (e) {
         reject(e)
       }
@@ -40,8 +39,12 @@ class ExternalAccountKeyring extends EventEmitter {
     })
   }
 
-  addAccounts (n = 1) {
-    throw new Error('Not supported')
+  addAccounts (n = 1, opts = {accounts: []}) {
+    if (opts.accounts.length !== n) {
+      return Promise.reject(new Error('Number of accounts do not match.'))
+    }
+    this.accounts = this.accounts.concat(opts.accounts.slice())
+    return Promise.resolve(opts.accounts)
   }
 
   getAccounts () {
@@ -49,125 +52,63 @@ class ExternalAccountKeyring extends EventEmitter {
   }
 
   // tx is an instance of the ethereumjs-tx class.
-  signTransaction (address, tx) {
-    var intervalCounter = 0
-    log.info('ExternalAccountKeyring - signTransaction - address:' + address)
+  signTransaction (address, tx, opts = {txId: null}) {
+    log.info('BidirectionalQrKeyring - signTransaction - address:' + address)
     if (!(tx instanceof Transaction)) return Promise.reject(new Error('Invalid transaction'))
     if (!ethUtil.isValidAddress(address)) return Promise.reject(new Error('Invalid address: ' + address))
 
-    var extToSign = this.getState().extToSign
+    var bidirectionalQrSignables = this.memStore
+      .getState().bidirectionalQrSignables
     const serialized = this._serializeUnsigned(tx, address)
-    const id = ethUtil.sha3(JSON.stringify(serialized) + Date.now().toString()).toString('hex')
-    extToSign.push({type: 'sign_transaction', payload: serialized, from: address, id})
-    this.updateState({extToSign})
-    //
-    // check for user provided signature
-    log.info('ExternalAccountKeyring - signTransaction: extToSign:' + JSON.stringify(extToSign))
+    if (opts.txId) var id = opts.txId
+    else id = ethUtil.sha3(JSON.stringify(serialized) + Date.now().toString()).toString('hex')
+    bidirectionalQrSignables.push({type: 'sign_transaction', payload: serialized, from: address, id})
+    this.memStore
+      .updateState({bidirectionalQrSignables})
+
+    log.info('BidirectionalQrKeyring - signTransaction: bidirectionalQrSignables:' + JSON.stringify(bidirectionalQrSignables))
     return new Promise((resolve, reject) => {
-        var interval = setInterval(() => {
-          const state = this.getState()
-          var extSigned = state['extSigned']
-          var extCancel = state['extCancel']
-          var extKeepAlive = state['extKeepAlive']
-
-          // if signing modal was closed
-          if (intervalCounter > this.timeoutMsec / this.pollingMsec) {
-            clearInterval(interval)
-            reject(new Error('Cancel pressed'))
-          }
-          // signing modal sent keep alive
-          if (extKeepAlive.find((eid) => eid === id)) {
-            extKeepAlive = extKeepAlive.filter((eid) => eid !== id)
-            this.updateState({extKeepAlive})
-            intervalCounter = 0
-          } else {
-            intervalCounter++
-          }
-
-          var signedTx = extSigned.find((txn) => this._sameTx(txn, tx, id, address))
-          var cancelTx = extCancel.find((txn) => this._sameTx(txn, tx, id, address))
-          log.info('signedTx: ' + JSON.stringify(signedTx) + ' cancelTx: ' + JSON.stringify(cancelTx))
-          if (cancelTx) {
-            log.info('user canceled tx')
-            clearInterval(interval)
-            extCancel = extCancel.filter(txn => !this._sameTx(txn, tx, id, address))
-            this.updateState({extCancel})
-            // if we could have besides tx state of 'signed' and 'failed'
-            // one called 'canceled', we could return in a more meaningful way
-            reject(new Error('Cancel pressed'))
-          }
-          if (signedTx) {
-            log.info('user signed Tx tx')
-            clearInterval(interval)
-            extSigned = extSigned.filter((txn) => !this._sameTx(txn, tx, id, address))
-            this.updateState({extSigned})
-            const {v, r, s} = this._signatureHexToVRS(signedTx.signature)
-            tx.v = v
-            tx.r = r
-            tx.s = s
-            if (tx.verifySignature()) {
-              resolve(tx)
-            } else {
-              reject(new Error('Invalid signature provided'))
-            }
-          }
-        }, this.pollingMsec)
+      this.once(`${id}:signed`, (r, s, v) => {
+        log.info(`BidirectionalQrKeyring - signTransaction signed id: ${id}`)
+        tx.r = r
+        tx.s = s
+        tx.v = v
+        resolve(tx)
+      })
+      this.once(`${id}:canceled`, () => {
+        log.info(`BidirectionalQrKeyring - signTransaction canceled id: ${id}`)
+        reject(new Error('Cancel pressed'))
+      })
     })
   }
 
   // For eth_sign, we need to sign arbitrary data:
-  signMessage (withAccount, data) {
-    return this._signMsg('sign_message', withAccount, data)
+  signMessage (withAccount, data, opts = {msgId: null}) {
+    return this._signMsg('sign_message', withAccount, data, opts.msgId)
   }
 
   // For personal_sign, we need to prefix the message:
-  signPersonalMessage (withAccount, msgHex) {
-    return this._signMsg('sign_personal_message', withAccount, msgHex)
+  signPersonalMessage (withAccount, msgHex, opts = {msgId: null}) {
+    return this._signMsg('sign_personal_message', withAccount, msgHex, opts.msgId)
   }
 
   // personal_signTypedData, signs data along with the schema
-  signTypedData (withAccount, typedData) {
-    return this._signMsg('sign_typed_data', withAccount, typedData)
+  signTypedData (withAccount, typedData, opts = {msgId: null}) {
+    return this._signMsg('sign_typed_data', withAccount, typedData, opts.msgId)
   }
 
   // exportAccount should return a hex-encoded private key:
   exportAccount (address) {
-    throw new Error('Not supported')
+    return Promise.reject(new Error('Not supported'))
   }
 
   removeAccount (address) {
     if (!this.accounts.map(acc => ethUtil.bufferToHex(acc).toLowerCase()).includes(address.toLowerCase())) {
-      throw new Error(`Address ${address} not found in this keyring`)
+      return Promise.reject(new Error(`Address ${address} not found in this keyring`))
     }
     this.accounts = this.accounts.filter(acc => acc.toLowerCase() !== address.toLowerCase())
   }
 
-/**
- *  Determines with good enough probability that an
- *  externally signed transaction and a transaction are the same.
- *
- * @param {Object} extTx Externally signed transaction provided by ui.
- * @param {Object} tx Transaction object of type 'ethereumjs-tx'
- * @param {String} id tx id during external signature process
- * @param {String} address Sender address of tx
- * @return {Boolean} true if they match, and false otherwise
- */
-  _sameTx (extTx, tx, id, address) {
-
-    if (extTx.id) {
-      return extTx.id === id
-    } else {
-      return extTx.payload.nonce === ethUtil.bufferToHex(tx.nonce) &&
-      extTx.payload.to === ethUtil.bufferToHex(tx.to) &&
-      extTx.payload.value === ethUtil.bufferToHex(tx.value) &&
-      extTx.payload.data === ethUtil.bufferToHex(tx.data) &&
-      extTx.from === address &&
-      extTx.payload.gasPrice === ethUtil.bufferToHex(tx.gasPrice) &&
-      extTx.payload.gasLimit === ethUtil.bufferToHex(tx.gasLimit) &&
-      extTx.payload.chainId === tx.getChainId().toString() &&
-      extTx.type === 'sign_transaction'
-    }
-  }
   // serializes an unsigned Transaction object
   _serializeUnsigned (tx, address) {
     return {
@@ -197,9 +138,9 @@ class ExternalAccountKeyring extends EventEmitter {
  * @return {Promise} signed Signed message
  */
   _signMsg (type, withAccount, msg) {
-    log.info('ExternalAccountKeyring - ' + type + ' - address:' + withAccount)
-    var intervalCounter = 0
-    var extToSign = this.getState().extToSign
+    log.info('BidirectionalQrKeyring - ' + type + ' - address:' + withAccount)
+    var bidirectionalQrSignables = this.memStore
+      .getState().bidirectionalQrSignables
     let msgStr
     if (type === 'sign_typed_data') {
       if (typeof msg !== 'string') {
@@ -209,101 +150,98 @@ class ExternalAccountKeyring extends EventEmitter {
       msgStr = msg
     }
     const id = ethUtil.sha3(type + msgStr + withAccount + Date.now().toString()).toString('hex')
-    extToSign.push({type: type, payload: msgStr, from: withAccount, id})
-    this.updateState({extToSign})
-    log.info('ExternalAccountKeyring - ' + type + ' - extToSign:' + JSON.stringify(extToSign))
+    bidirectionalQrSignables.push({type: type, payload: msgStr, from: withAccount, id})
+    this.memStore.updateState({bidirectionalQrSignables})
+    log.info('BidirectionalQrKeyring - ' + type + ' - bidirectionalQrSignables:' + JSON.stringify(bidirectionalQrSignables))
     return new Promise((resolve, reject) => {
-      //
-      // check for user provided signature
-      var interval = setInterval(() => {
-        const state = this.getState()
-        var extSigned = state['extSigned']
-        var extCancel = state['extCancel']
-        var extKeepAlive = state['extKeepAlive']
-
-        // signing modal was closed
-        if (intervalCounter > this.timeoutMsec / this.pollingMsec) {
-          clearInterval(interval)
-          reject(new Error('Cancel pressed'))
-        }
-        // signing modal sent keep alive
-        if (extKeepAlive.find((eid) => eid === id)) {
-          extKeepAlive = extKeepAlive.filter((eid) => eid !== id)
-          this.updateState({extKeepAlive})
-          intervalCounter = 0
-        } else {
-          intervalCounter++
-        }
-
-        var signedMsg = extSigned.find((sg) => this._eq(sg, msg, withAccount, type, id))
-        var cancelMsg = extCancel.find((ca) => this._eq(ca, msg, withAccount, type, id))
-        log.info('signedMsg: ' + JSON.stringify(signedMsg) + ' cancelMsg: ' + JSON.stringify(cancelMsg))
-        if (cancelMsg) {
-          log.info('user canceled msg signing')
-          this._cleanup(extCancel, 'extCancel', interval, msg, withAccount, type)
-          // if we could have besides msg state of 'signed' and 'failed'
-          // one called 'canceled', we could return in a more meaningful way
-          reject(new Error('Cancel pressed'))
-        }
-        if (signedMsg) {
-          log.info('user signed Msg')
-          this._cleanup(extSigned, 'extSigned', interval, msg, withAccount, type)
-          try {
-            const {v, r, s} = this._signatureHexToVRS(signedMsg.signature)
-            if (type === 'sign_message') {
-              ethUtil.ecrecover(ethUtil.sha3(ethUtil.toBuffer(signedMsg.payload)), ethUtil.bufferToInt(v), r, s)
-            }
-            if (type === 'sign_personal_message') {
-              ethUtil.ecrecover(ethUtil.hashPersonalMessage(ethUtil.toBuffer(signedMsg.payload)), ethUtil.bufferToInt(v), r, s)
-            }
-            if (type === 'sign_typed_data') {
-              ethUtil.ecrecover(sigUtil.sign(signedMsg.payload), ethUtil.bufferToInt(v), r, s)
-            }
-            var rawMsgSig = ethUtil.bufferToHex(sigUtil.concatSig(v, r, s))
-            resolve(rawMsgSig)
-          } catch (e) {
-            reject(new Error('Signature invalid'))
-          }
-        }
-      }, this.pollingMsec)
+      this.once(`${id}:signed`, (rawMsgSig) => {
+        log.info(`BidirectionalQrKeyring - signTransaction signed id: ${id}`)
+        resolve(rawMsgSig)
+      })
+      this.once(`${id}:canceled`, () => {
+        log.info(`BidirectionalQrKeyring - signTransaction canceled id: ${id}`)
+        reject(new Error('Cancel pressed'))
+      })
     })
   }
 
-/**
- * Compares extMsg with msg and returs true if they match.
- *
- * @param {Object} extMsg Message object signed by metamask ui.
- * @param {Object} msg Message to compare with
- * @param {String} withAccount Address that has signed msg.
- * @param {String} type Type of message one of 'sign_message',
- *   'sign_personal_message', or 'sign_typed_data'
- * @param {String} id External sign id of msg,
- * @return {Promise} signed Signed message
- */
-  _eq (extMsg, msg, withAccount, type, id) {
-    return extMsg.id === id || (id === null && extMsg.id === null &&
-      extMsg.payload &&
-      extMsg.payload === msg.msgParams.data &&
-      extMsg.from === withAccount &&
-      extMsg.type === type)
+  submitSignature (id, r, s, v) {
+    r = ethUtil.toBuffer(r)
+    s = ethUtil.toBuffer(s)
+    v = ethUtil.toBuffer(v)
+    var signables = this.memStore
+      .getState()
+      .bidirectionalQrSignables
+      .filter(signable => signable.id === id)
+    if (!signables || signables.length !== 1) {
+      return Promise.reject(new Error('Signable id not found.'))
+    }
+    const signable = signables[0]
+    if (signable.type === 'sign_transaction') {
+      const tx = new Transaction(signable.payload)
+      tx.r = r
+      tx.s = s
+      tx.v = v
+      if (!tx.verifySignature()) {
+        return Promise.reject(new Error('Invalid signature.'))
+      }
+      this.emit(`${id}:signed`, r, s, v)
+    } else {
+      try {
+        if (signable.type === 'sign_message') {
+          ethUtil.ecrecover(
+            ethUtil.sha3(ethUtil.toBuffer(signable.payload)),
+            ethUtil.bufferToInt(v),
+            r,
+            s
+          )
+        } else if (signable.type === 'sign_personal_message') {
+          ethUtil.ecrecover(
+            ethUtil.hashPersonalMessage(
+              ethUtil.toBuffer(signable.payload)),
+              ethUtil.bufferToInt(v),
+              r,
+              s
+          )
+        } else if (signable.type === 'sign_typed_data') {
+          ethUtil.ecrecover(
+            sigUtil.sign(signable.payload),
+            ethUtil.bufferToInt(v),
+            r,
+            s
+          )
+        } else return Promise.reject(new Error('Unsupported signature type.'))
+
+        const rawMsgSig = ethUtil.bufferToHex(sigUtil.concatSig(v, r, s))
+        this.emit(`${id}:signed`, rawMsgSig)
+      } catch (e) {
+        return Promise.reject(new Error('Invalid signature'))
+      }
+    }
+    const idRemoved = this.memStore
+      .getState()
+      .bidirectionalQrSignables
+      .filter(signable => signable.id !== id)
+    this.memStore
+      .updateState({
+        bidirectionalQrSignables: idRemoved,
+      })
+    return Promise.resolve()
   }
 
-  // cleanup memStore and stop polling
-  _cleanup (toClean, key, interval, msg, withAccount, type) {
-    clearInterval(interval)
-    toClean = toClean.filter((sg) => !this._eq(sg, msg, withAccount, type))
-    this.updateState({[key]: toClean})
-  }
-
-  // converts hex encoded signature to r, s, v signature
-  _signatureHexToVRS (signature) {
-    signature = ethUtil.stripHexPrefix(signature)
-    const r = ethUtil.toBuffer('0x' + signature.substr(0, 64))
-    const s = ethUtil.toBuffer('0x' + signature.substr(64, 64))
-    const v = ethUtil.toBuffer('0x' + signature.substr(128, 2))
-    return {r: r, s: s, v: v}
+  cancelSignature (id) {
+    const idRemoved = this.memStore
+      .getState()
+      .bidirectionalQrSignables
+      .filter(signable => signable.id !== id)
+    this.memStore
+      .updateState({
+        bidirectionalQrSignables: idRemoved,
+      })
+      this.emit(`${id}:canceled`)
+    return Promise.resolve()
   }
 }
-
-ExternalAccountKeyring.type = type
-module.exports = ExternalAccountKeyring
+BidirectionalQrKeyring.type = type
+BidirectionalQrKeyring.instance = null
+module.exports = BidirectionalQrKeyring
